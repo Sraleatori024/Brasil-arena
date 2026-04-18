@@ -92,20 +92,24 @@ export default function App() {
   
   // Admin State
   const [showAdmin, setShowAdmin] = useState(false);
-  const [adminAuth, setAdminAuth] = useState('');
+  const [adminEmail, setAdminEmail] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
+  const [adminAuth, setAdminAuth] = useState(''); // Keep for master key
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
   const [adminData, setAdminData] = useState<any>(null);
+  const [activeTab, setActiveTab ] = useState<'login' | 'master'>('login');
 
   // Local Admin Draft State
-  const [localSettings, setLocalSettings] = useState<AppSettings | null>(null);
-  const [localOptions, setLocalOptions] = useState<Record<'left', Option> & Record<'right', Option> | null>(null);
+  const [localSettings, setLocalSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [localOptions, setLocalOptions] = useState<Record<'left' | 'right', Option>>(DEFAULT_OPTIONS);
 
+  // Sincronizar estado local APENAS quando o admin logar ou for carregado pela primeira vez
   useEffect(() => {
-    if (isAdminLoggedIn && settings && options) {
+    if (isAdminLoggedIn && isLoaded) {
       setLocalSettings(settings);
       setLocalOptions(options);
     }
-  }, [isAdminLoggedIn, settings, options]);
+  }, [isAdminLoggedIn, isLoaded]); // Tira settings/options da dependência para não resetar enquanto digita
 
   const [syncError, setSyncError] = useState(false);
 
@@ -143,6 +147,30 @@ export default function App() {
       });
   };
 
+  const handleFirestoreError = (error: any, operation: string, path: string | null = null) => {
+    console.error(`Firestore Error [${operation}]:`, error);
+    if (error.code === 'permission-denied') {
+      const errorInfo = {
+        error: error.message,
+        operationType: operation,
+        path: path,
+        authInfo: {
+          userId: auth.currentUser?.uid || 'anonymous',
+          email: auth.currentUser?.email || 'none',
+          emailVerified: auth.currentUser?.emailVerified || false,
+          isAnonymous: auth.currentUser?.isAnonymous || true,
+          providerInfo: auth.currentUser?.providerData.map(p => ({
+            providerId: p.providerId,
+            displayName: p.displayName || '',
+            email: p.email || ''
+          })) || []
+        }
+      };
+      throw new Error(JSON.stringify(errorInfo));
+    }
+    throw error;
+  };
+
   useEffect(() => {
     // 1. Settings Listener
     const unsubSettings = onSnapshot(doc(db, 'settings', 'global'), (docSnap) => {
@@ -150,16 +178,16 @@ export default function App() {
         setSettings(docSnap.data() as AppSettings);
       } else {
         // Init default settings if missing
-        setDoc(doc(db, 'settings', 'global'), DEFAULT_SETTINGS);
+        setDoc(doc(db, 'settings', 'global'), DEFAULT_SETTINGS).catch(e => handleFirestoreError(e, 'create', 'settings/global'));
       }
-    });
+    }, (error) => handleFirestoreError(error, 'get', 'settings/global'));
 
     // 2. Options Listener
     const unsubOptions = onSnapshot(collection(db, 'options'), (querySnap) => {
       if (querySnap.empty) {
         // Init default options if missing
-        setDoc(doc(db, 'options', 'left'), DEFAULT_OPTIONS.left);
-        setDoc(doc(db, 'options', 'right'), DEFAULT_OPTIONS.right);
+        setDoc(doc(db, 'options', 'left'), DEFAULT_OPTIONS.left).catch(e => handleFirestoreError(e, 'create', 'options/left'));
+        setDoc(doc(db, 'options', 'right'), DEFAULT_OPTIONS.right).catch(e => handleFirestoreError(e, 'create', 'options/right'));
       } else {
         const newOptions: any = {};
         querySnap.forEach(doc => {
@@ -171,7 +199,7 @@ export default function App() {
           setIsLoaded(true);
         }
       }
-    });
+    }, (error) => handleFirestoreError(error, 'list', 'options'));
 
     // 3. Fallback loading
     const timeout = setTimeout(() => setIsLoaded(true), 4000);
@@ -216,13 +244,12 @@ export default function App() {
           totalPurchases: increment(1)
         });
 
-        await batch.commit();
+        await batch.commit().catch(e => handleFirestoreError(e, 'write', 'batch/purchase'));
         
         setSuccessData({ ...purchaseData, timestamp: Date.now() });
         setUserPosition(position);
       } catch (err) {
         console.error('Erro na compra Firebase:', err);
-        alert('Erro ao processar. Verifique sua conexão.');
       } finally {
         setIsProcessing(null);
       }
@@ -239,43 +266,55 @@ export default function App() {
       return;
     }
 
-    // Para esta versão, usaremos a chave 8888 ou o controle local
-    if (adminAuth === '8888' || adminAuth === 'admin123') {
+    // Credenciais Padrão solicitadas pelo usuário
+    const MASTER_EMAIL = 'admin@arenabrasil.com';
+    const MASTER_PASS = 'arena2026';
+
+    const isAuthorized = 
+      (activeTab === 'login' && adminEmail === MASTER_EMAIL && adminPassword === MASTER_PASS) ||
+      (activeTab === 'master' && (adminAuth === '8888' || adminAuth === 'admin123'));
+
+    if (isAuthorized) {
        setIsAdminLoggedIn(true);
        const q = query(collection(db, 'purchases'), orderBy('timestamp', 'desc'), limit(50));
        const snap = await getDocs(q);
        const pData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
        setAdminData({ purchases: pData, options, settings });
     } else {
-       alert('Chave administrativa inválida.');
+       alert('Credenciais inválidas. Tente novamente.');
     }
   };
 
   const adminAction = async (endpoint: string, body: any) => {
+    console.log(`Admin Action: ${endpoint}`, body);
     try {
       if (endpoint === 'update-settings') {
-        await setDoc(doc(db, 'settings', 'global'), body);
+        await setDoc(doc(db, 'settings', 'global'), body)
+          .catch(e => handleFirestoreError(e, 'update', 'settings/global'));
       } else if (endpoint === 'bulk-update') {
         const batch = writeBatch(db);
         if (body.settings) batch.set(doc(db, 'settings', 'global'), body.settings);
-        if (body.options?.left) batch.update(doc(db, 'options', 'left'), body.options.left);
-        if (body.options?.right) batch.update(doc(db, 'options', 'right'), body.options.right);
-        await batch.commit();
+        if (body.options?.left) batch.set(doc(db, 'options', 'left'), body.options.left);
+        if (body.options?.right) batch.set(doc(db, 'options', 'right'), body.options.right);
+        await batch.commit()
+          .catch(e => handleFirestoreError(e, 'write', 'batch/bulk-update'));
       } else if (endpoint === 'reset') {
         const batch = writeBatch(db);
         batch.update(doc(db, 'options', 'left'), { totalPurchases: 0, recentGrowth: 0 });
         batch.update(doc(db, 'options', 'right'), { totalPurchases: 0, recentGrowth: 0 });
-        await batch.commit();
+        await batch.commit()
+          .catch(e => handleFirestoreError(e, 'write', 'batch/reset'));
         alert('Reset concluído (registros de compra permanecem no histórico)');
       } else if (endpoint === 'adjust-count') {
-        await setDoc(doc(db, 'options', body.id), { totalPurchases: body.count }, { merge: true });
+        await setDoc(doc(db, 'options', body.id), { totalPurchases: body.count }, { merge: true })
+          .catch(e => handleFirestoreError(e, 'update', `options/${body.id}`));
       }
       
       loginAdmin(); // Refresh data
       alert('Alteração salva com sucesso! 🎉');
     } catch (e) {
       console.error('Erro na ação admin:', e);
-      alert('Falha ao salvar. Verifique permissões.');
+      // O erro já deve ter sido lançado/mostrado pelo handleFirestoreError
     }
   };
 
@@ -338,6 +377,14 @@ export default function App() {
           </div>
           
           <div className="absolute top-0 right-0 w-96 h-96 bg-br-yellow/5 blur-[100px] -z-0" />
+          
+          <div className="absolute top-0 right-0 w-1/2 h-full opacity-10 pointer-events-none">
+            <img 
+              src="https://picsum.photos/seed/abstract/1200/800" 
+              className="w-full h-full object-cover grayscale"
+              referrerPolicy="no-referrer"
+            />
+          </div>
         </section>
 
         {/* Comparison Arena */}
@@ -380,7 +427,11 @@ export default function App() {
                 rankings[id] === 1 ? "border-br-yellow shadow-[0_0_45px_rgba(254,209,0,0.3)] scale-[1.01]" : "border-white/5 hover:border-white/20"
               )}>
                 <div className="aspect-[3/2] md:aspect-[16/10] xl:aspect-video relative rounded-[28px] overflow-hidden max-h-[220px] md:max-h-[280px]">
-                  <img src={options[id].image} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 group-hover:scale-105 transition-all duration-1000" />
+                  <img 
+                    src={options[id].image} 
+                    className="w-full h-full object-cover opacity-80 group-hover:opacity-100 group-hover:scale-105 transition-all duration-1000" 
+                    referrerPolicy="no-referrer"
+                  />
                   <div className="absolute inset-0 bg-gradient-to-t from-br-blue/90 via-transparent to-transparent p-6 md:p-10 flex flex-col justify-end">
                     <h4 className="text-2xl md:text-4xl font-black italic uppercase leading-none mb-2 drop-shadow-xl">{options[id].name}</h4>
                     <p className="text-xs md:text-sm font-medium opacity-70 mb-4 max-w-xs line-clamp-2 md:line-clamp-none">{options[id].description}</p>
@@ -455,34 +506,84 @@ export default function App() {
               >✕</button>
 
               {!isAdminLoggedIn ? (
-                <div className="max-w-sm mx-auto py-12 space-y-10">
+                <div className="max-w-md mx-auto py-12 space-y-8">
                   <div className="text-center space-y-4">
                     <div className="w-20 h-20 bg-br-blue rounded-[30px] flex items-center justify-center mx-auto shadow-2xl">
-                       <Lock className="w-10 h-10 text-white" />
+                       <ShieldCheck className="w-10 h-10 text-white" />
                     </div>
                     <div>
                        <h2 className="text-3xl font-black italic uppercase tracking-tighter">Gestão da Arena</h2>
-                       <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Autenticação Necessária</p>
+                       <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Painel Administrativo Protegido</p>
                     </div>
                   </div>
+
+                  <div className="flex bg-gray-50 p-1 rounded-2xl">
+                    <button 
+                      onClick={() => setActiveTab('login')}
+                      className={cn(
+                        "flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all",
+                        activeTab === 'login' ? "bg-white text-br-blue shadow-md" : "text-gray-400"
+                      )}
+                    >E-mail Access</button>
+                    <button 
+                      onClick={() => setActiveTab('master')}
+                      className={cn(
+                        "flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all",
+                        activeTab === 'master' ? "bg-white text-br-blue shadow-md" : "text-gray-400"
+                      )}
+                    >Master Key</button>
+                  </div>
+
                   <div className="space-y-4">
-                    <input 
-                       type="password" 
-                       value={adminAuth}
-                       onChange={(e) => setAdminAuth(e.target.value)}
-                       placeholder="Chave Administrativa"
-                       className="w-full border-4 border-gray-50 rounded-[30px] p-6 text-xl font-black text-center focus:border-br-yellow outline-none transition-all"
-                       onKeyDown={(e) => e.key === 'Enter' && loginAdmin()}
-                    />
+                    {activeTab === 'login' ? (
+                      <>
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black uppercase text-gray-400 ml-4">E-mail Administrativo</label>
+                          <input 
+                            type="email" 
+                            value={adminEmail}
+                            onChange={(e) => setAdminEmail(e.target.value)}
+                            placeholder="ex: admin@arena.com"
+                            className="w-full bg-gray-50 rounded-[20px] p-5 text-sm font-bold outline-none border border-gray-100 focus:border-br-yellow transition-all"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black uppercase text-gray-400 ml-4">Senha</label>
+                          <input 
+                            type="password" 
+                            value={adminPassword}
+                            onChange={(e) => setAdminPassword(e.target.value)}
+                            placeholder="••••••••"
+                            className="w-full bg-gray-50 rounded-[20px] p-5 text-sm font-bold outline-none border border-gray-100 focus:border-br-yellow transition-all"
+                            onKeyDown={(e) => e.key === 'Enter' && loginAdmin()}
+                          />
+                        </div>
+                      </>
+                    ) : (
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-black uppercase text-gray-400 ml-4">Chave Administrativa</label>
+                        <input 
+                          type="password" 
+                          value={adminAuth}
+                          onChange={(e) => setAdminAuth(e.target.value)}
+                          placeholder="Chave Mestres"
+                          className="w-full bg-gray-50 rounded-[20px] p-5 text-lg font-black text-center outline-none border border-gray-100 focus:border-br-yellow transition-all"
+                          onKeyDown={(e) => e.key === 'Enter' && loginAdmin()}
+                        />
+                      </div>
+                    )}
+                    
                     <button 
                        onClick={() => loginAdmin()}
-                       className="w-full bg-br-blue text-white py-6 rounded-[30px] font-black uppercase tracking-widest hover:bg-br-green transition-all shadow-xl"
-                    >Entrar no Painel</button>
+                       className="w-full bg-br-blue text-white py-6 rounded-[30px] font-black uppercase tracking-widest hover:bg-br-green transition-all shadow-xl flex items-center justify-center gap-3"
+                    >
+                      <Lock className="w-5 h-5" /> Entrar no Painel
+                    </button>
                     
                     <button 
                        onClick={() => loginAdmin(true)}
-                       className="w-full bg-gray-50 text-gray-400 py-3 rounded-[20px] font-bold uppercase text-[10px] tracking-widest hover:text-br-blue transition-all"
-                    >Acesso Rápido (Visualização)</button>
+                       className="w-full text-gray-400 py-3 rounded-[20px] font-bold uppercase text-[10px] tracking-widest hover:text-br-blue transition-all"
+                    >Ver Modo Demonstração</button>
                   </div>
                 </div>
               ) : (
@@ -524,16 +625,16 @@ export default function App() {
                               <label className="text-[10px] uppercase font-black text-gray-400 px-4">Título Principal</label>
                               <input 
                                  className="w-full bg-gray-50 rounded-[24px] p-5 font-bold outline-none focus:ring-4 focus:ring-br-yellow/20"
-                                 value={localSettings?.mainTitle || ''}
-                                 onChange={(e) => setLocalSettings(prev => prev ? { ...prev, mainTitle: e.target.value } : null)}
+                                 value={localSettings.mainTitle || ''}
+                                 onChange={(e) => setLocalSettings(prev => ({ ...prev, mainTitle: e.target.value }))}
                               />
                            </div>
                            <div className="space-y-2">
                               <label className="text-[10px] uppercase font-black text-gray-400 px-4">Subtítulo/Descrição</label>
                               <textarea 
                                  className="w-full bg-gray-50 rounded-[24px] p-5 font-bold outline-none focus:ring-4 focus:ring-br-yellow/20 min-h-[100px]"
-                                 value={localSettings?.subTitle || ''}
-                                 onChange={(e) => setLocalSettings(prev => prev ? { ...prev, subTitle: e.target.value } : null)}
+                                 value={localSettings.subTitle || ''}
+                                 onChange={(e) => setLocalSettings(prev => ({ ...prev, subTitle: e.target.value }))}
                               />
                            </div>
                         </div>
@@ -547,14 +648,14 @@ export default function App() {
                            <input 
                               placeholder="Nome Esquerda"
                               className="bg-gray-50 rounded-[24px] p-5 font-bold outline-none"
-                              value={localSettings?.leftName || ''}
-                              onChange={(e) => setLocalSettings(prev => prev ? { ...prev, leftName: e.target.value } : null)}
+                              value={localSettings.leftName || ''}
+                              onChange={(e) => setLocalSettings(prev => ({ ...prev, leftName: e.target.value }))}
                            />
                            <input 
                               placeholder="Nome Direita"
                               className="bg-gray-50 rounded-[24px] p-5 font-bold outline-none"
-                              value={localSettings?.rightName || ''}
-                              onChange={(e) => setLocalSettings(prev => prev ? { ...prev, rightName: e.target.value } : null)}
+                              value={localSettings.rightName || ''}
+                              onChange={(e) => setLocalSettings(prev => ({ ...prev, rightName: e.target.value }))}
                            />
                         </div>
                      </div>
@@ -573,28 +674,32 @@ export default function App() {
                                  <div className="space-y-4">
                                     <div className="flex gap-4">
                                        <div className="w-16 h-16 rounded-2xl overflow-hidden bg-gray-200 flex-shrink-0">
-                                          <img src={localOptions?.[id].image || ''} className="w-full h-full object-cover" />
+                                          <img 
+                                            src={localOptions[id].image || ''} 
+                                            className="w-full h-full object-cover" 
+                                            referrerPolicy="no-referrer"
+                                          />
                                        </div>
                                        <div className="flex-grow space-y-2">
                                           <input 
                                              placeholder="Link da Imagem"
                                              className="w-full bg-white rounded-xl p-3 text-xs font-bold outline-none border border-gray-100"
-                                             value={localOptions?.[id].image || ''}
-                                             onChange={(e) => setLocalOptions(prev => prev ? { ...prev, [id]: { ...prev[id], image: e.target.value } } : null)}
+                                             value={localOptions[id].image || ''}
+                                             onChange={(e) => setLocalOptions(prev => ({ ...prev, [id]: { ...prev[id], image: e.target.value } }))}
                                           />
                                           <input 
                                              placeholder="Nome do Item"
                                              className="w-full bg-white rounded-xl p-3 text-xs font-bold outline-none border border-gray-100"
-                                             value={localOptions?.[id].name || ''}
-                                             onChange={(e) => setLocalOptions(prev => prev ? { ...prev, [id]: { ...prev[id], name: e.target.value } } : null)}
+                                             value={localOptions[id].name || ''}
+                                             onChange={(e) => setLocalOptions(prev => ({ ...prev, [id]: { ...prev[id], name: e.target.value } }))}
                                           />
                                        </div>
                                     </div>
                                     <textarea 
                                        placeholder="Descrição Curta"
                                        className="w-full bg-white rounded-xl p-4 text-xs font-bold outline-none border border-gray-100 min-h-[80px]"
-                                       value={localOptions?.[id].description || ''}
-                                       onChange={(e) => setLocalOptions(prev => prev ? { ...prev, [id]: { ...prev[id], description: e.target.value } } : null)}
+                                       value={localOptions[id].description || ''}
+                                       onChange={(e) => setLocalOptions(prev => ({ ...prev, [id]: { ...prev[id], description: e.target.value } }))}
                                     />
                                     <div className="flex gap-4 items-center">
                                        <div className="flex-grow flex items-center bg-white rounded-xl px-4 border border-gray-100">
@@ -603,13 +708,13 @@ export default function App() {
                                              type="number"
                                              placeholder="Valor"
                                              className="w-full p-3 text-xs font-black outline-none"
-                                             value={localOptions?.[id].price || 0}
-                                             onChange={(e) => setLocalOptions(prev => prev ? { ...prev, [id]: { ...prev[id], price: Number(e.target.value) } } : null)}
+                                             value={localOptions[id].price || 0}
+                                             onChange={(e) => setLocalOptions(prev => ({ ...prev, [id]: { ...prev[id], price: Number(e.target.value) } }))}
                                           />
                                        </div>
                                        <button 
-                                          onClick={() => adminAction('adjust-count', { id, count: localOptions?.[id].totalPurchases })}
-                                          className="bg-br-yellow/20 text-br-yellow p-3 rounded-xl hover:bg-br-yellow/40 transition-all font-black"
+                                          onClick={() => adminAction('adjust-count', { id, count: localOptions[id].totalPurchases })}
+                                          className="bg-br-yellow/20 text-br-yellow p-3 rounded-xl hover:bg-br-yellow/40 transition-all font-black text-[10px]"
                                        >
                                           Reset/Ajuste
                                        </button>
@@ -619,8 +724,8 @@ export default function App() {
                                              type="number"
                                              placeholder="Contagem Manual"
                                              className="w-full p-3 text-xs font-black outline-none"
-                                             value={localOptions?.[id].totalPurchases || 0}
-                                             onChange={(e) => setLocalOptions(prev => prev ? { ...prev, [id]: { ...prev[id], totalPurchases: Number(e.target.value) } } : null)}
+                                             value={localOptions[id].totalPurchases || 0}
+                                             onChange={(e) => setLocalOptions(prev => ({ ...prev, [id]: { ...prev[id], totalPurchases: Number(e.target.value) } }))}
                                           />
                                        </div>
                                     </div>
