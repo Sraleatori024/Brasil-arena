@@ -4,7 +4,7 @@ import {
   CheckCircle2, Settings, RefreshCw, Trash2, 
   TrendingUp, TrendingDown, Target, Zap, 
   Ticket, ArrowUpRight, BarChart3, Users,
-  Globe, ShieldCheck, Lock, LogOut, Image,
+  Globe, ShieldCheck, Lock, LogOut,
   FileText, DollarSign, Layout
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -64,22 +64,48 @@ export default function App() {
     }
   }, [isAdminLoggedIn, settings, options]);
 
+  const safeJson = async (res: Response) => {
+    const text = await res.text();
+    if (!text || text === 'undefined') {
+      console.error(`Received invalid JSON body ("${text}") from ${res.url}`);
+      return null;
+    }
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      console.error(`Failed to parse JSON for ${res.url}. Body: "${text.substring(0, 100)}${text.length > 100 ? '...' : ''}"`);
+      return null;
+    }
+  };
+
   useEffect(() => {
     const socket = io();
 
+    socket.on('connect', () => {
+      console.log('Socket.io conectado ✅');
+    });
+
     socket.on('state_update', (data) => {
+      if (!data) return;
       if (data.options) setOptions(data.options);
       if (data.settings) setSettings(data.settings);
       if (typeof data.totalPurchases === 'number') setTotalPurchases(data.totalPurchases);
     });
 
-    fetch('/api/state')
-      .then(res => res.json())
+    socket.on('disconnect', () => {
+      console.warn('Socket.io desconectado ❌');
+    });
+
+    window.fetch('/api/state')
+      .then(safeJson)
       .then(data => {
-        setOptions(data.options);
-        setSettings(data.settings);
-        setTotalPurchases(data.totalPurchases);
-      });
+        if (data) {
+          setOptions(data.options);
+          setSettings(data.settings);
+          setTotalPurchases(data.totalPurchases);
+        }
+      })
+      .catch(err => console.error('Error fetching initial state:', err));
 
     return () => { socket.disconnect(); };
   }, []);
@@ -89,16 +115,18 @@ export default function App() {
     // Simulate payment process
     setTimeout(async () => {
       try {
-        const res = await fetch('/api/purchase', {
+        const res = await window.fetch('/api/purchase', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ side })
         });
-        const data = await res.json();
-        setSuccessData(data.purchase);
-        setUserPosition(data.purchase.position);
+        const data = await safeJson(res);
+        if (data && data.purchase) {
+          setSuccessData(data.purchase);
+          setUserPosition(data.purchase.position);
+        }
       } catch (err) {
-        console.error(err);
+        console.error('Purchase error:', err);
       } finally {
         setIsProcessing(null);
       }
@@ -106,31 +134,45 @@ export default function App() {
   };
 
   const loginAdmin = () => {
-    fetch('/api/admin/data', {
+    window.fetch('/api/admin/data', {
       headers: { 'Authorization': `Bearer ${adminAuth}` }
     })
     .then(res => {
       if (res.ok) {
         setIsAdminLoggedIn(true);
-        return res.json();
+        return safeJson(res);
       }
       throw new Error('Unauthorized');
     })
-    .then(setAdminData)
-    .catch(() => alert('Acesso negado. Verifique sua chave.'));
+    .then(data => {
+      if (data) setAdminData(data);
+    })
+    .catch((err) => {
+      console.error('Admin login error:', err);
+      alert('Acesso negado. Verifique sua chave.');
+    });
   };
 
   const adminAction = async (endpoint: string, body: any) => {
-    const res = await fetch(`/api/admin/${endpoint}`, {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${adminAuth}`
-      },
-      body: JSON.stringify(body)
-    });
-    if (res.ok) {
-       loginAdmin();
+    try {
+      const res = await window.fetch(`/api/admin/${endpoint}`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${adminAuth}`
+        },
+        body: JSON.stringify(body)
+      });
+      if (res.ok) {
+         loginAdmin();
+         alert('Alteração salva com sucesso! 🎉');
+      } else {
+        const err = await safeJson(res);
+        alert(`Erro: ${err?.error || 'Ação falhou'}`);
+      }
+    } catch (e) {
+      console.error('Admin action error:', e);
+      alert('Erro de conexão com o servidor.');
     }
   };
 
@@ -174,7 +216,7 @@ export default function App() {
         </div>
       </nav>
 
-      <main className="pt-24 pb-16 px-4 max-w-7xl mx-auto space-y-8">
+      <main className="pt-20 pb-12 px-4 max-w-7xl mx-auto space-y-6">
         
         {/* Hero Section */}
         <section className="relative overflow-hidden bg-br-blue rounded-[32px] border-2 border-br-yellow p-6 md:p-10 text-center md:text-left flex flex-col md:flex-row items-center justify-between gap-8 shadow-2xl">
@@ -196,7 +238,7 @@ export default function App() {
         </section>
 
         {/* Comparison Arena */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-start relative">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start relative">
           
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10 hidden lg:flex w-20 h-20 bg-br-yellow border-[10px] border-br-green rounded-full items-center justify-center font-black italic text-3xl text-br-blue shadow-2xl">
             VS
@@ -234,7 +276,7 @@ export default function App() {
                 "group relative bg-br-blue rounded-[40px] overflow-hidden p-2 border-4 transition-all duration-700 shadow-2xl",
                 rankings[id] === 1 ? "border-br-yellow shadow-[0_0_45px_rgba(254,209,0,0.3)] scale-[1.01]" : "border-white/5 hover:border-white/20"
               )}>
-                <div className="aspect-[3/2] md:aspect-[16/10] xl:aspect-video relative rounded-[28px] overflow-hidden max-h-[300px] md:max-h-[400px]">
+                <div className="aspect-[3/2] md:aspect-[16/10] xl:aspect-video relative rounded-[28px] overflow-hidden max-h-[220px] md:max-h-[280px]">
                   <img src={options[id].image} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 group-hover:scale-105 transition-all duration-1000" />
                   <div className="absolute inset-0 bg-gradient-to-t from-br-blue/90 via-transparent to-transparent p-6 md:p-10 flex flex-col justify-end">
                     <h4 className="text-2xl md:text-4xl font-black italic uppercase leading-none mb-2 drop-shadow-xl">{options[id].name}</h4>
@@ -253,11 +295,11 @@ export default function App() {
                 onClick={() => handlePurchase(id)}
                 disabled={isProcessing !== null}
                 className={cn(
-                  "w-full py-6 md:py-8 rounded-[32px] text-xl md:text-2xl font-black uppercase italic tracking-tighter flex items-center justify-center gap-4 transition-all shadow-xl active:scale-95 disabled:opacity-50",
+                  "w-full py-4 md:py-6 rounded-[24px] text-lg md:text-xl font-black uppercase italic tracking-tighter flex items-center justify-center gap-3 transition-all shadow-xl active:scale-95 disabled:opacity-50",
                   id === 'left' ? "bg-white text-br-blue hover:bg-br-yellow" : "bg-br-yellow text-br-blue hover:bg-white"
                 )}
               >
-                {isProcessing === id ? <RefreshCw className="w-8 h-8 animate-spin" /> : <Ticket className="w-8 h-8" />}
+                {isProcessing === id ? <RefreshCw className="w-6 h-6 animate-spin" /> : <Ticket className="w-6 h-6" />}
                 {isProcessing === id ? 'Confirmando...' : 'Comprar Ingresso'}
               </button>
             </motion.div>
@@ -338,36 +380,36 @@ export default function App() {
               ) : (
                 <div className="space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-700">
                   
-                  <div className="flex flex-col md:flex-row justify-between items-end gap-6 border-b border-gray-100 pb-8">
-                     <div className="space-y-1">
-                        <h2 className="text-4xl font-black italic uppercase tracking-tighter">Painel de <span className="text-br-green">Controle</span></h2>
-                        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
-                           <ShieldCheck className="w-4 h-4 text-br-green" /> Administrador Conectado
-                        </p>
-                     </div>
-                     <div className="flex gap-4">
-                        <button onClick={() => adminAction('reset', {})} className="px-6 py-3 rounded-2xl bg-red-50 text-red-500 font-bold text-xs uppercase flex items-center gap-2 hover:bg-red-100 transition-all">
-                           <Trash2 className="w-4 h-4" /> Resetar Arena
-                        </button>
-                        <button onClick={() => setIsAdminLoggedIn(false)} className="px-6 py-3 rounded-2xl bg-gray-50 text-gray-400 font-bold text-xs uppercase flex items-center gap-2 hover:bg-gray-200 transition-all">
-                           <LogOut className="w-4 h-4" /> Sair
-                        </button>
-                     </div>
-                  </div>
+          <div className="flex items-center gap-6 border-b border-gray-100 pb-8">
+            <div className="space-y-1">
+               <h2 className="text-4xl font-black italic uppercase tracking-tighter">Painel de <span className="text-br-green">Controle</span></h2>
+               <p className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-br-green" /> Administrador Conectado
+                   <span className="mx-2 opacity-20">|</span>
+                   <Users className="w-4 h-4 text-br-blue" /> <span className="text-br-blue font-black">{totalPurchases}</span> Registros Totais
+               </p>
+            </div>
+            <div className="flex-grow md:flex-initial flex gap-4 ml-auto">
+               <button 
+                  onClick={() => adminAction('bulk-update', { settings: localSettings, options: localOptions })}
+                  className="px-8 py-3 bg-br-blue text-white font-black uppercase text-xs rounded-2xl hover:bg-br-green hover:scale-105 transition-all shadow-lg flex items-center gap-2"
+               >
+                  <RefreshCw className="w-4 h-4" /> Salvar Tudo
+               </button>
+               <button onClick={() => adminAction('reset', {})} className="px-6 py-3 rounded-2xl bg-red-50 text-red-500 font-bold text-xs uppercase flex items-center gap-2 hover:bg-red-100 transition-all">
+                  <Trash2 className="w-4 h-4" /> Reset
+               </button>
+               <button onClick={() => setIsAdminLoggedIn(false)} className="px-6 py-3 rounded-2xl bg-gray-50 text-gray-400 font-bold text-xs uppercase flex items-center gap-2 hover:bg-gray-200 transition-all">
+                  <LogOut className="w-4 h-4" /> Sair
+               </button>
+            </div>
+          </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
                      {/* Settings */}
                      <div className="space-y-8">
-                        <div className="flex items-center justify-between border-b-2 border-br-yellow pb-4">
-                           <div className="flex items-center gap-3 text-br-blue font-black uppercase text-xs tracking-widest">
-                              <Layout className="w-4 h-4" /> Conteúdo Principal
-                           </div>
-                           <button 
-                              onClick={() => adminAction('update-settings', localSettings)}
-                              className="px-4 py-1.5 bg-br-green text-white text-[10px] font-black uppercase rounded-lg hover:scale-105 transition-all"
-                           >
-                              Salvar Texto
-                           </button>
+                        <div className="flex items-center gap-3 text-br-blue font-black uppercase text-xs tracking-widest border-b-2 border-br-yellow pb-4">
+                           <Layout className="w-4 h-4" /> Conteúdo Principal
                         </div>
                         <div className="space-y-6">
                            <div className="space-y-2">
@@ -419,12 +461,6 @@ export default function App() {
                               <div key={id} className="bg-gray-50 rounded-[40px] p-8 space-y-6">
                                  <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest opacity-40">
                                     <span>Lado {id === 'left' ? 'Esquerdo' : 'Direito'}</span>
-                                    <button 
-                                       onClick={() => adminAction('update-option', localOptions?.[id])}
-                                       className="px-4 py-1 bg-br-blue text-white rounded-lg hover:scale-105 transition-all"
-                                    >
-                                       Salvar Card
-                                    </button>
                                  </div>
                                  <div className="space-y-4">
                                     <div className="flex gap-4">

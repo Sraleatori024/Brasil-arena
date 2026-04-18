@@ -71,6 +71,15 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, { cors: { origin: '*' } });
+io.on('connection', (socket) => {
+  console.log('Cliente conectado via Socket.io:', socket.id);
+  // Send current state immediately on connection
+  socket.emit('state_update', { options, settings, totalPurchases: purchases.length });
+
+  socket.on('disconnect', () => {
+    console.log('Cliente desconectado:', socket.id);
+  });
+});
 
 app.use(express.json());
 
@@ -159,6 +168,17 @@ app.post('/api/admin/update-option', authGuard, (req, res) => {
     return res.json({ success: true });
   }
   res.status(404).json({ error: 'Opção não encontrada' });
+});
+
+app.post('/api/admin/bulk-update', authGuard, (req, res) => {
+  const { settings: newSettings, options: newOptions } = req.body;
+  if (newSettings) settings = { ...settings, ...newSettings };
+  if (newOptions) {
+    if (newOptions.left) options.left = { ...options.left, ...newOptions.left };
+    if (newOptions.right) options.right = { ...options.right, ...newOptions.right };
+  }
+  io.emit('state_update', { options, settings, totalPurchases: purchases.length });
+  res.json({ success: true });
 });
 
 app.post('/api/admin/reset', authGuard, (req, res) => {

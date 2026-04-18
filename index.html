@@ -3,7 +3,23 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>My Google AI Studio App</title>
+    <title>Brasil Trends - Arena de Decisões</title>
+    <script>
+      (function() {
+        try {
+          var originalFetch = window.fetch;
+          var descriptor = Object.getOwnPropertyDescriptor(window, 'fetch');
+          if (originalFetch && (!descriptor || descriptor.configurable !== false)) {
+            Object.defineProperty(window, 'fetch', {
+              get: function() { return originalFetch; },
+              set: function(v) { if (v !== originalFetch) { console.warn('Blocked fetch overwrite'); } },
+              configurable: true,
+              enumerable: true
+            });
+          }
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
