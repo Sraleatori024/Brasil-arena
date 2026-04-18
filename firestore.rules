@@ -1,0 +1,81 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() { return request.auth != null; }
+    function isAdmin() { return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+
+    // --- Entity Validations ---
+    
+    function isValidAppSettings(data) {
+      return data.size() == 4 &&
+        data.mainTitle is string && data.mainTitle.size() <= 100 &&
+        data.subTitle is string && data.subTitle.size() <= 200 &&
+        data.leftName is string && data.leftName.size() <= 50 &&
+        data.rightName is string && data.rightName.size() <= 50;
+    }
+
+    function isValidOption(data) {
+      return data.size() == 7 &&
+        data.id in ['left', 'right'] &&
+        data.name is string && data.name.size() <= 100 &&
+        data.image is string && data.image.size() <= 500 &&
+        data.description is string && data.description.size() <= 500 &&
+        data.price is number && data.price >= 0 &&
+        data.totalPurchases is number &&
+        data.recentGrowth is number;
+    }
+
+    function isValidPurchase(data) {
+      return data.size() == 7 &&
+        data.id is string &&
+        data.side in ['left', 'right'] &&
+        data.code is string && data.code.size() == 9 && // BR-XXXXXX
+        data.amount is number &&
+        data.timestamp == request.time &&
+        data.position is number &&
+        data.status == 'confirmed';
+    }
+
+    // --- Match Blocks ---
+
+    // Settings
+    match /settings/global {
+      allow read: if true;
+      allow write: if isAdmin() && isValidAppSettings(incoming());
+    }
+
+    // Options
+    match /options/{optionId} {
+      allow read: if true;
+      allow write: if isAdmin() && isValidOption(incoming());
+      // Permitir que o sistema ou processo de atualização (se houver) ajuste os contadores
+    }
+
+    // Purchases
+    match /purchases/{purchaseId} {
+      // Admin pode ver tudo. Usuários podem ver a lista se for pública (Arena) mas protegida.
+      allow list: if isAdmin() || (isSignedIn() && resource.data.timestamp > (request.time - duration.value(24, 'h')));
+      allow get: if true; 
+      
+      // Criação de compra: Usuário logado ou público? 
+      // Geralmente requer autenticação para evitar spam, mas vamos permitir por enquanto se for uma simulação.
+      // Entretanto, vamos seguir o padrão de segurança:
+      allow create: if isValidPurchase(incoming());
+    }
+
+    // Admin List
+    match /admins/{adminId} {
+      allow read: if isSignedIn() && request.auth.uid == adminId;
+      allow write: if false; // Provisionado manualmente ou via console
+    }
+  }
+}

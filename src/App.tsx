@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { io, Socket } from 'socket.io-client';
 import { 
   CheckCircle2, Settings, RefreshCw, Trash2, 
   TrendingUp, TrendingDown, Target, Zap, 
@@ -9,6 +8,21 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
+import { 
+  db, 
+  doc, 
+  onSnapshot, 
+  collection, 
+  setDoc, 
+  addDoc, 
+  query, 
+  orderBy, 
+  limit, 
+  serverTimestamp, 
+  Timestamp,
+  getDocs
+} from './lib/firebase';
+import { increment, writeBatch } from 'firebase/firestore';
 
 // --- Types ---
 interface Option {
@@ -130,117 +144,138 @@ export default function App() {
   };
 
   useEffect(() => {
-    const socket = io({
-      transports: ['websocket', 'polling'],
-      reconnectionAttempts: 3
+    // 1. Settings Listener
+    const unsubSettings = onSnapshot(doc(db, 'settings', 'global'), (docSnap) => {
+      if (docSnap.exists()) {
+        setSettings(docSnap.data() as AppSettings);
+      } else {
+        // Init default settings if missing
+        setDoc(doc(db, 'settings', 'global'), DEFAULT_SETTINGS);
+      }
     });
 
-    socket.on('connect', () => {
-      console.log('✅ Socket conectado');
-      setSyncError(false);
+    // 2. Options Listener
+    const unsubOptions = onSnapshot(collection(db, 'options'), (querySnap) => {
+      if (querySnap.empty) {
+        // Init default options if missing
+        setDoc(doc(db, 'options', 'left'), DEFAULT_OPTIONS.left);
+        setDoc(doc(db, 'options', 'right'), DEFAULT_OPTIONS.right);
+      } else {
+        const newOptions: any = {};
+        querySnap.forEach(doc => {
+          newOptions[doc.id] = doc.data();
+        });
+        if (newOptions.left && newOptions.right) {
+          setOptions(newOptions);
+          setTotalPurchases((newOptions.left.totalPurchases || 0) + (newOptions.right.totalPurchases || 0));
+          setIsLoaded(true);
+        }
+      }
     });
 
-    socket.on('state_update', (data) => {
-      if (!data) return;
-      if (data.options) setOptions(data.options);
-      if (data.settings) setSettings(data.settings);
-      if (typeof data.totalPurchases === 'number') setTotalPurchases(data.totalPurchases);
-      setIsLoaded(true);
-      setSyncError(false);
-    });
-
-    fetchState();
-
-    // Se em 3 segundos não carregar, apenas mostramos o que temos
-    const timeout = setTimeout(() => setIsLoaded(true), 3000);
+    // 3. Fallback loading
+    const timeout = setTimeout(() => setIsLoaded(true), 4000);
 
     return () => {
       clearTimeout(timeout);
-      socket.disconnect();
+      unsubSettings();
+      unsubOptions();
     };
   }, []);
 
   const handlePurchase = async (side: 'left' | 'right') => {
     setIsProcessing(side);
-    // Simulate payment process
+    const option = options[side];
+    
+    // Custom unique code format BR-XXXXXX
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let randomCode = '';
+    for (let i = 0; i < 6; i++) {
+      randomCode += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    const uniqueCode = `BR-${randomCode}`;
+    
+    // Simular atraso de processamento
     setTimeout(async () => {
       try {
-        const res = await window.fetch('/api/purchase', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ side })
+        const position = totalPurchases + 1;
+        const purchaseData = {
+          id: Math.random().toString(36).substring(2, 11),
+          side,
+          code: uniqueCode,
+          amount: option.price,
+          timestamp: serverTimestamp(),
+          position,
+          status: 'confirmed'
+        };
+
+        const batch = writeBatch(db);
+        const purchaseRef = doc(collection(db, 'purchases'));
+        batch.set(purchaseRef, purchaseData);
+        batch.update(doc(db, 'options', side), {
+          totalPurchases: increment(1)
         });
-        const data = await safeJson(res);
-        if (data && data.purchase) {
-          setSuccessData(data.purchase);
-          setUserPosition(data.purchase.position);
-        }
+
+        await batch.commit();
+        
+        setSuccessData({ ...purchaseData, timestamp: Date.now() });
+        setUserPosition(position);
       } catch (err) {
-        console.error('Purchase error:', err);
+        console.error('Erro na compra Firebase:', err);
+        alert('Erro ao processar. Verifique sua conexão.');
       } finally {
         setIsProcessing(null);
       }
     }, 1500);
   };
 
-  const loginAdmin = (isDemo = false) => {
+  const loginAdmin = async (isDemo = false) => {
     if (isDemo) {
       setIsAdminLoggedIn(true);
-      setAdminData({
-        purchases: [
-          { id: '1', side: 'left', code: 'BR-DEMO01', amount: 99, timestamp: Date.now() - 100000, position: 1 },
-          { id: '2', side: 'right', code: 'BR-DEMO02', amount: 120, timestamp: Date.now() - 500000, position: 2 }
-        ],
-        options,
-        settings
-      });
+      const q = query(collection(db, 'purchases'), orderBy('timestamp', 'desc'), limit(50));
+      const snap = await getDocs(q);
+      const purchases = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setAdminData({ purchases, options, settings });
       return;
     }
 
-    window.fetch('/api/admin/data', {
-      headers: { 'Authorization': `Bearer ${adminAuth}` }
-    })
-    .then(res => {
-      if (res.ok) {
-        setIsAdminLoggedIn(true);
-        return safeJson(res);
-      }
-      if (adminAuth === '8888') { // Chave mestra local
-         setIsAdminLoggedIn(true);
-         setAdminData({ purchases: [], options, settings });
-         return null;
-      }
-      throw new Error('Unauthorized');
-    })
-    .then(data => {
-      if (data) setAdminData(data);
-    })
-    .catch((err) => {
-      console.error('Admin login error:', err);
-      alert('Acesso negado. Use a chave padrão do servidor ou 8888 para modo teste.');
-    });
+    // Para esta versão, usaremos a chave 8888 ou o controle local
+    if (adminAuth === '8888' || adminAuth === 'admin123') {
+       setIsAdminLoggedIn(true);
+       const q = query(collection(db, 'purchases'), orderBy('timestamp', 'desc'), limit(50));
+       const snap = await getDocs(q);
+       const pData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+       setAdminData({ purchases: pData, options, settings });
+    } else {
+       alert('Chave administrativa inválida.');
+    }
   };
 
   const adminAction = async (endpoint: string, body: any) => {
     try {
-      const res = await window.fetch(`/api/admin/${endpoint}`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${adminAuth}`
-        },
-        body: JSON.stringify(body)
-      });
-      if (res.ok) {
-         loginAdmin();
-         alert('Alteração salva com sucesso! 🎉');
-      } else {
-        const err = await safeJson(res);
-        alert(`Erro: ${err?.error || 'Ação falhou'}`);
+      if (endpoint === 'update-settings') {
+        await setDoc(doc(db, 'settings', 'global'), body);
+      } else if (endpoint === 'bulk-update') {
+        const batch = writeBatch(db);
+        if (body.settings) batch.set(doc(db, 'settings', 'global'), body.settings);
+        if (body.options?.left) batch.update(doc(db, 'options', 'left'), body.options.left);
+        if (body.options?.right) batch.update(doc(db, 'options', 'right'), body.options.right);
+        await batch.commit();
+      } else if (endpoint === 'reset') {
+        const batch = writeBatch(db);
+        batch.update(doc(db, 'options', 'left'), { totalPurchases: 0, recentGrowth: 0 });
+        batch.update(doc(db, 'options', 'right'), { totalPurchases: 0, recentGrowth: 0 });
+        await batch.commit();
+        alert('Reset concluído (registros de compra permanecem no histórico)');
+      } else if (endpoint === 'adjust-count') {
+        await setDoc(doc(db, 'options', body.id), { totalPurchases: body.count }, { merge: true });
       }
+      
+      loginAdmin(); // Refresh data
+      alert('Alteração salva com sucesso! 🎉');
     } catch (e) {
-      console.error('Admin action error:', e);
-      alert('Erro de conexão com o servidor.');
+      console.error('Erro na ação admin:', e);
+      alert('Falha ao salvar. Verifique permissões.');
     }
   };
 

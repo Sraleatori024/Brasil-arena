@@ -1,0 +1,60 @@
+{
+  "entities": {
+    "AppSettings": {
+      "title": "Configurações da Arena",
+      "description": "Configurações globais da interface da arena.",
+      "type": "object",
+      "properties": {
+        "mainTitle": { "type": "string", "description": "Título principal" },
+        "subTitle": { "type": "string", "description": "Subtítulo de apoio" },
+        "leftName": { "type": "string", "description": "Nome da categoria esquerda" },
+        "rightName": { "type": "string", "description": "Nome da categoria direita" }
+      },
+      "required": ["mainTitle", "subTitle", "leftName", "rightName"]
+    },
+    "ArenaOption": {
+      "title": "Opção da Arena",
+      "description": "Detalhes de uma opção (esquerda ou direita) na arena.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "enum": ["left", "right"] },
+        "name": { "type": "string" },
+        "image": { "type": "string" },
+        "description": { "type": "string" },
+        "price": { "type": "number" },
+        "totalPurchases": { "type": "number" },
+        "recentGrowth": { "type": "number" }
+      },
+      "required": ["id", "name", "image", "description", "price", "totalPurchases", "recentGrowth"]
+    },
+    "Purchase": {
+      "title": "Registro de Compra",
+      "description": "Um registro individual de apoio a uma opção.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "side": { "type": "string", "enum": ["left", "right"] },
+        "code": { "type": "string" },
+        "amount": { "type": "number" },
+        "timestamp": { "type": "number" },
+        "position": { "type": "number" },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "side", "code", "amount", "timestamp", "position", "status"]
+    }
+  },
+  "firestore": {
+    "settings/global": {
+      "schema": "AppSettings",
+      "description": "Documento único para configurações globais."
+    },
+    "options/{optionId}": {
+      "schema": "ArenaOption",
+      "description": "Dados mutáveis e totais para as opções left e right."
+    },
+    "purchases/{purchaseId}": {
+      "schema": "Purchase",
+      "description": "Histórico completo de transações."
+    }
+  }
+}
