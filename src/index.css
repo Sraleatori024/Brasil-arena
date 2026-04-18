@@ -1,0 +1,17 @@
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800;900&family=JetBrains+Mono:wght@400;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Montserrat", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  
+  --color-br-green: #009b3a;
+  --color-br-yellow: #fed100;
+  --color-br-blue: #002776;
+}
+
+@layer base {
+  body {
+    @apply bg-br-green text-white font-sans antialiased selection:bg-br-yellow selection:text-br-green;
+  }
+}
