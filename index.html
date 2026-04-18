@@ -8,14 +8,20 @@
       (function() {
         try {
           var originalFetch = window.fetch;
-          var descriptor = Object.getOwnPropertyDescriptor(window, 'fetch');
-          if (originalFetch && (!descriptor || descriptor.configurable !== false)) {
-            Object.defineProperty(window, 'fetch', {
-              get: function() { return originalFetch; },
-              set: function(v) { if (v !== originalFetch) { console.warn('Blocked fetch overwrite'); } },
-              configurable: true,
-              enumerable: true
-            });
+          if (originalFetch) {
+            var descriptor = Object.getOwnPropertyDescriptor(window, 'fetch');
+            if (!descriptor || descriptor.configurable !== false) {
+              Object.defineProperty(window, 'fetch', {
+                get: function() { return originalFetch; },
+                set: function(v) { 
+                  if (v !== originalFetch) { 
+                    console.warn('Blocked fetch overwrite'); 
+                  } 
+                },
+                configurable: true,
+                enumerable: true
+              });
+            }
           }
         } catch (e) {}
       })();

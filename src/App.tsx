@@ -64,21 +64,49 @@ export default function App() {
     }
   }, [isAdminLoggedIn, settings, options]);
 
+  const [syncError, setSyncError] = useState(false);
+
   const safeJson = async (res: Response) => {
-    const text = await res.text();
-    if (!text || text === 'undefined') {
-      console.error(`Received invalid JSON body ("${text}") from ${res.url}`);
-      return null;
-    }
     try {
+      const text = await res.text();
+      if (!text || text === 'undefined' || text.trim() === '') {
+        console.error(`Received invalid JSON body from ${res.url}`);
+        return null;
+      }
       return JSON.parse(text);
     } catch (e) {
-      console.error(`Failed to parse JSON for ${res.url}. Body: "${text.substring(0, 100)}${text.length > 100 ? '...' : ''}"`);
+      console.error(`Failed to parse response from ${res.url}:`, e);
       return null;
     }
   };
 
+  const fetchState = () => {
+    console.log('Iniciando sincronização...');
+    window.fetch('/api/state')
+      .then(safeJson)
+      .then(data => {
+        if (data && data.options && data.settings) {
+          setOptions(data.options);
+          setSettings(data.settings);
+          setTotalPurchases(data.totalPurchases);
+          setSyncError(false);
+          console.log('Arena sincronizada via API ✅');
+        } else {
+          console.warn('Dados inválidos recebidos da API');
+        }
+      })
+      .catch(err => {
+        console.error('Erro na sincronização API:', err);
+        setSyncError(true);
+      });
+  };
+
   useEffect(() => {
+    // Timeout para mostrar botão de tentar novamente após 6 segundos
+    const timer = setTimeout(() => {
+      if (!options || !settings) setSyncError(true);
+    }, 6000);
+
     const socket = io();
 
     socket.on('connect', () => {
@@ -87,27 +115,23 @@ export default function App() {
 
     socket.on('state_update', (data) => {
       if (!data) return;
+      console.log('Recebida atualização de estado via Socket');
       if (data.options) setOptions(data.options);
       if (data.settings) setSettings(data.settings);
       if (typeof data.totalPurchases === 'number') setTotalPurchases(data.totalPurchases);
+      if (data.options && data.settings) setSyncError(false);
     });
 
-    socket.on('disconnect', () => {
-      console.warn('Socket.io desconectado ❌');
+    socket.on('connect_error', (err) => {
+      console.warn('Erro de conexão socket:', err.message);
     });
 
-    window.fetch('/api/state')
-      .then(safeJson)
-      .then(data => {
-        if (data) {
-          setOptions(data.options);
-          setSettings(data.settings);
-          setTotalPurchases(data.totalPurchases);
-        }
-      })
-      .catch(err => console.error('Error fetching initial state:', err));
+    fetchState();
 
-    return () => { socket.disconnect(); };
+    return () => { 
+      clearTimeout(timer);
+      socket.disconnect(); 
+    };
   }, []);
 
   const handlePurchase = async (side: 'left' | 'right') => {
@@ -193,8 +217,21 @@ export default function App() {
   }, [options]);
 
   if (!options || !settings) return (
-    <div className="min-h-screen bg-br-green flex items-center justify-center font-black italic text-white text-3xl animate-pulse">
-      SINCRONIZANDO ARENA...
+    <div className="min-h-screen bg-br-green flex flex-col items-center justify-center font-black italic text-white p-6">
+      {!syncError ? (
+        <div className="text-3xl animate-pulse uppercase tracking-tighter">SINCRONIZANDO ARENA...</div>
+      ) : (
+        <div className="text-center space-y-8 max-w-md">
+          <div className="text-br-yellow text-4xl leading-none">A ARENA ESTÁ DEMORANDO PARA RESPONDER</div>
+          <p className="text-sm opacity-60 uppercase font-bold italic">Estamos com dificuldade de conectar ao servidor principal.</p>
+          <button 
+            onClick={() => window.location.reload()}
+            className="w-full bg-white text-br-blue py-6 rounded-[30px] font-black uppercase tracking-widest hover:bg-br-yellow transition-all shadow-2xl"
+          >
+            Tentar Recarregar
+          </button>
+        </div>
+      )}
     </div>
   );
 
