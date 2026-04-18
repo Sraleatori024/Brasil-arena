@@ -87,6 +87,7 @@ export default function App() {
   const [totalPurchases, setTotalPurchases] = useState(0);
   const [userPosition, setUserPosition] = useState<number | null>(null);
   const [isProcessing, setIsProcessing] = useState<string | null>(null);
+  const [confirmingSide, setConfirmingSide] = useState<string | null>(null);
   const [successData, setSuccessData] = useState<any>(null);
   const [isLoaded, setIsLoaded] = useState(false);
   
@@ -445,17 +446,58 @@ export default function App() {
               </div>
 
               {/* Action Button */}
-              <button 
-                onClick={() => handlePurchase(id)}
-                disabled={isProcessing !== null}
-                className={cn(
-                  "w-full py-4 md:py-6 rounded-[24px] text-lg md:text-xl font-black uppercase italic tracking-tighter flex items-center justify-center gap-3 transition-all shadow-xl active:scale-95 disabled:opacity-50",
-                  id === 'left' ? "bg-white text-br-blue hover:bg-br-yellow" : "bg-br-yellow text-br-blue hover:bg-white"
+              <div className="space-y-3">
+                <AnimatePresence mode="wait">
+                  {confirmingSide === id ? (
+                    <motion.button 
+                      key="confirm"
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      onClick={() => {
+                        setConfirmingSide(null);
+                        handlePurchase(id);
+                      }}
+                      disabled={isProcessing !== null}
+                      className={cn(
+                        "w-full py-4 md:py-6 rounded-[24px] text-lg md:text-xl font-black uppercase italic tracking-tighter flex flex-col items-center justify-center transition-all shadow-[0_0_30px_rgba(255,255,255,0.2)] active:scale-95 disabled:opacity-50",
+                        "bg-white text-br-blue hover:bg-br-green hover:text-white"
+                      )}
+                    >
+                      <span className="text-[10px] uppercase tracking-widest opacity-60 mb-1">Confirmar Participação</span>
+                      <div className="flex items-center gap-2">
+                         <DollarSign className="w-5 h-5" />
+                         <span>Pagar R$ {options[id].price.toFixed(2)}</span>
+                      </div>
+                    </motion.button>
+                  ) : (
+                    <motion.button 
+                      key="votar"
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.95 }}
+                      onClick={() => setConfirmingSide(id)}
+                      disabled={isProcessing !== null}
+                      className={cn(
+                        "w-full py-4 md:py-6 rounded-[24px] text-lg md:text-xl font-black uppercase italic tracking-tighter flex items-center justify-center gap-3 transition-all shadow-xl active:scale-95 disabled:opacity-50",
+                        id === 'left' ? "bg-br-green text-br-blue hover:bg-br-yellow" : "bg-br-yellow text-br-blue hover:bg-br-green hover:text-white"
+                      )}
+                    >
+                      {isProcessing === id ? <RefreshCw className="w-6 h-6 animate-spin" /> : <Target className="w-6 h-6" />}
+                      {isProcessing === id ? 'Confirmando...' : 'Qual é o seu voto?'}
+                    </motion.button>
+                  )}
+                </AnimatePresence>
+                
+                {confirmingSide === id && (
+                  <button 
+                    onClick={() => setConfirmingSide(null)}
+                    className="w-full text-[10px] font-bold uppercase tracking-widest text-white/40 hover:text-white transition-all underline underline-offset-4"
+                  >
+                    Cancelar
+                  </button>
                 )}
-              >
-                {isProcessing === id ? <RefreshCw className="w-6 h-6 animate-spin" /> : <Ticket className="w-6 h-6" />}
-                {isProcessing === id ? 'Confirmando...' : 'Comprar Ingresso'}
-              </button>
+              </div>
             </motion.div>
           ))}
         </div>
