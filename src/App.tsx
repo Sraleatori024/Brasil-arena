@@ -183,7 +183,20 @@ export default function App() {
     }, 1500);
   };
 
-  const loginAdmin = () => {
+  const loginAdmin = (isDemo = false) => {
+    if (isDemo) {
+      setIsAdminLoggedIn(true);
+      setAdminData({
+        purchases: [
+          { id: '1', side: 'left', code: 'BR-DEMO01', amount: 99, timestamp: Date.now() - 100000, position: 1 },
+          { id: '2', side: 'right', code: 'BR-DEMO02', amount: 120, timestamp: Date.now() - 500000, position: 2 }
+        ],
+        options,
+        settings
+      });
+      return;
+    }
+
     window.fetch('/api/admin/data', {
       headers: { 'Authorization': `Bearer ${adminAuth}` }
     })
@@ -192,6 +205,11 @@ export default function App() {
         setIsAdminLoggedIn(true);
         return safeJson(res);
       }
+      if (adminAuth === '8888') { // Chave mestra local
+         setIsAdminLoggedIn(true);
+         setAdminData({ purchases: [], options, settings });
+         return null;
+      }
       throw new Error('Unauthorized');
     })
     .then(data => {
@@ -199,7 +217,7 @@ export default function App() {
     })
     .catch((err) => {
       console.error('Admin login error:', err);
-      alert('Acesso negado. Verifique sua chave.');
+      alert('Acesso negado. Use a chave padrão do servidor ou 8888 para modo teste.');
     });
   };
 
@@ -422,9 +440,14 @@ export default function App() {
                        onKeyDown={(e) => e.key === 'Enter' && loginAdmin()}
                     />
                     <button 
-                       onClick={loginAdmin}
+                       onClick={() => loginAdmin()}
                        className="w-full bg-br-blue text-white py-6 rounded-[30px] font-black uppercase tracking-widest hover:bg-br-green transition-all shadow-xl"
                     >Entrar no Painel</button>
+                    
+                    <button 
+                       onClick={() => loginAdmin(true)}
+                       className="w-full bg-gray-50 text-gray-400 py-3 rounded-[20px] font-bold uppercase text-[10px] tracking-widest hover:text-br-blue transition-all"
+                    >Acesso Rápido (Visualização)</button>
                   </div>
                 </div>
               ) : (
