@@ -107,10 +107,15 @@ export default function App() {
       if (!options || !settings) setSyncError(true);
     }, 6000);
 
-    const socket = io();
+    const socket = io(window.location.origin, {
+      transports: ['websocket', 'polling'],
+      reconnectionAttempts: 5,
+      timeout: 10000,
+    });
 
     socket.on('connect', () => {
-      console.log('Socket.io conectado ✅');
+      console.log('Socket.io conectado ✅ | ID:', socket.id);
+      setSyncError(false);
     });
 
     socket.on('state_update', (data) => {
@@ -119,11 +124,15 @@ export default function App() {
       if (data.options) setOptions(data.options);
       if (data.settings) setSettings(data.settings);
       if (typeof data.totalPurchases === 'number') setTotalPurchases(data.totalPurchases);
-      if (data.options && data.settings) setSyncError(false);
+      if (data.options && data.settings) {
+        setSyncError(false);
+      }
     });
 
     socket.on('connect_error', (err) => {
       console.warn('Erro de conexão socket:', err.message);
+      // Fallback para fetch se o socket falhar
+      fetchState();
     });
 
     fetchState();

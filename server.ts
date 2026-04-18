@@ -70,7 +70,11 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 
 const app = express();
 const httpServer = createServer(app);
-const io = new Server(httpServer, { cors: { origin: '*' } });
+const io = new Server(httpServer, { 
+  cors: { origin: '*' },
+  allowEIO3: true,
+  transports: ['websocket', 'polling']
+});
 io.on('connection', (socket) => {
   console.log('Cliente conectado via Socket.io:', socket.id);
   // Send current state immediately on connection
@@ -100,7 +104,12 @@ const authGuard = (req: express.Request, res: express.Response, next: express.Ne
 };
 
 // API Routes
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: Date.now() });
+});
+
 app.get('/api/state', (req, res) => {
+  console.log('API: Solicitando estado da arena');
   updateTrends();
   res.json({ options, settings, totalPurchases: purchases.length });
 });
