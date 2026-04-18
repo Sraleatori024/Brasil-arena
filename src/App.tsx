@@ -28,6 +28,34 @@ interface AppSettings {
   rightName: string;
 }
 
+const DEFAULT_SETTINGS: AppSettings = {
+  mainTitle: 'Arena de Decisões',
+  subTitle: 'Participe da maior arena de tendências do Brasil',
+  leftName: 'Opção A',
+  rightName: 'Opção B'
+};
+
+const DEFAULT_OPTIONS: Record<'left' | 'right', Option> = {
+  left: {
+    id: 'left',
+    name: 'Carregando...',
+    image: 'https://picsum.photos/seed/praia/800/800',
+    description: 'Buscando dados do servidor...',
+    price: 0,
+    totalPurchases: 0,
+    recentGrowth: 0
+  },
+  right: {
+    id: 'right',
+    name: 'Carregando...',
+    image: 'https://picsum.photos/seed/chapada/800/800',
+    description: 'Buscando dados do servidor...',
+    price: 0,
+    totalPurchases: 0,
+    recentGrowth: 0
+  }
+};
+
 interface Purchase {
   id: string;
   side: 'left' | 'right';
@@ -40,12 +68,13 @@ interface Purchase {
 
 // --- App Component ---
 export default function App() {
-  const [options, setOptions] = useState<Record<'left' | 'right', Option> | null>(null);
-  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [options, setOptions] = useState<Record<'left' | 'right', Option>>(DEFAULT_OPTIONS);
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [totalPurchases, setTotalPurchases] = useState(0);
   const [userPosition, setUserPosition] = useState<number | null>(null);
   const [isProcessing, setIsProcessing] = useState<string | null>(null);
   const [successData, setSuccessData] = useState<any>(null);
+  const [isLoaded, setIsLoaded] = useState(false);
   
   // Admin State
   const [showAdmin, setShowAdmin] = useState(false);
@@ -81,7 +110,7 @@ export default function App() {
   };
 
   const fetchState = () => {
-    console.log('Iniciando sincronização...');
+    console.log('Tentando sincronizar com o servidor local...');
     window.fetch('/api/state')
       .then(safeJson)
       .then(data => {
@@ -89,57 +118,45 @@ export default function App() {
           setOptions(data.options);
           setSettings(data.settings);
           setTotalPurchases(data.totalPurchases);
+          setIsLoaded(true);
           setSyncError(false);
-          console.log('Arena sincronizada via API ✅');
-        } else {
-          console.warn('Dados inválidos recebidos da API');
+          console.log('✅ Arena sincronizada!');
         }
       })
       .catch(err => {
-        console.error('Erro na sincronização API:', err);
+        console.warn('⚠️ Servidor ainda não respondeu, usando modo offline.');
         setSyncError(true);
       });
   };
 
   useEffect(() => {
-    // Timeout para mostrar botão de tentar novamente após 6 segundos
-    const timer = setTimeout(() => {
-      if (!options || !settings) setSyncError(true);
-    }, 6000);
-
-    const socket = io(window.location.origin, {
+    const socket = io({
       transports: ['websocket', 'polling'],
-      reconnectionAttempts: 5,
-      timeout: 10000,
+      reconnectionAttempts: 3
     });
 
     socket.on('connect', () => {
-      console.log('Socket.io conectado ✅ | ID:', socket.id);
+      console.log('✅ Socket conectado');
       setSyncError(false);
     });
 
     socket.on('state_update', (data) => {
       if (!data) return;
-      console.log('Recebida atualização de estado via Socket');
       if (data.options) setOptions(data.options);
       if (data.settings) setSettings(data.settings);
       if (typeof data.totalPurchases === 'number') setTotalPurchases(data.totalPurchases);
-      if (data.options && data.settings) {
-        setSyncError(false);
-      }
-    });
-
-    socket.on('connect_error', (err) => {
-      console.warn('Erro de conexão socket:', err.message);
-      // Fallback para fetch se o socket falhar
-      fetchState();
+      setIsLoaded(true);
+      setSyncError(false);
     });
 
     fetchState();
 
-    return () => { 
-      clearTimeout(timer);
-      socket.disconnect(); 
+    // Se em 3 segundos não carregar, apenas mostramos o que temos
+    const timeout = setTimeout(() => setIsLoaded(true), 3000);
+
+    return () => {
+      clearTimeout(timeout);
+      socket.disconnect();
     };
   }, []);
 
@@ -225,22 +242,9 @@ export default function App() {
     };
   }, [options]);
 
-  if (!options || !settings) return (
+  if (!isLoaded) return (
     <div className="min-h-screen bg-br-green flex flex-col items-center justify-center font-black italic text-white p-6">
-      {!syncError ? (
-        <div className="text-3xl animate-pulse uppercase tracking-tighter">SINCRONIZANDO ARENA...</div>
-      ) : (
-        <div className="text-center space-y-8 max-w-md">
-          <div className="text-br-yellow text-4xl leading-none">A ARENA ESTÁ DEMORANDO PARA RESPONDER</div>
-          <p className="text-sm opacity-60 uppercase font-bold italic">Estamos com dificuldade de conectar ao servidor principal.</p>
-          <button 
-            onClick={() => window.location.reload()}
-            className="w-full bg-white text-br-blue py-6 rounded-[30px] font-black uppercase tracking-widest hover:bg-br-yellow transition-all shadow-2xl"
-          >
-            Tentar Recarregar
-          </button>
-        </div>
-      )}
+      <div className="text-3xl animate-pulse uppercase tracking-tighter">SINCRONIZANDO ARENA...</div>
     </div>
   );
 
